@@ -11,6 +11,7 @@
 /// This library does not support devices with a block size other than 512
 /// bytes.
 #[derive(Clone)]
+#[repr(transparent)]
 pub struct Block {
     /// The 512 bytes in this block (or sector).
     pub contents: [u8; Block::LEN],
@@ -90,13 +91,15 @@ pub trait BlockDevice {
 ///
 /// Caches a single block.
 #[derive(Debug)]
-pub struct BlockCache<D> {
+pub struct BlockCache<D, const N: usize = 256> {
     block_device: D,
-    block: [Block; 1],
+    /// multi-block scratch + cache
+    blocks: [Block; N],
+    /// for single-block cache
     block_idx: Option<BlockIdx>,
 }
 
-impl<D> BlockCache<D>
+impl<D, const N: usize> BlockCache<D, N>
 where
     D: BlockDevice,
 {
@@ -104,7 +107,7 @@ where
     pub fn new(block_device: D) -> Self {
         BlockCache {
             block_device,
-            block: [Block::new()],
+            blocks: core::array::from_fn(|_| Block::new()),
             block_idx: None,
         }
     }
@@ -113,26 +116,43 @@ where
     pub fn read(&mut self, block_idx: BlockIdx) -> Result<&Block, D::Error> {
         if self.block_idx != Some(block_idx) {
             self.block_idx = None;
-            self.block_device.read(&mut self.block, block_idx)?;
+            self.block_device.read(&mut self.blocks[..1], block_idx)?;
             self.block_idx = Some(block_idx);
         }
-        Ok(&self.block[0])
+        Ok(&self.blocks[0])
+    }
+
+    /// multi-read
+    pub fn read_multi(
+        &mut self,
+        start: BlockIdx,
+        count: usize,
+    ) -> Result<&[Block], D::Error> {
+        let count = count.min(N);
+
+        self.block_device
+            .read(&mut self.blocks[..count], start)?;
+
+        // disable single-cache
+        self.block_idx = None;
+
+        Ok(&self.blocks[..count])
     }
 
     /// Read a block, and return a reference to it.
     pub fn read_mut(&mut self, block_idx: BlockIdx) -> Result<&mut Block, D::Error> {
         if self.block_idx != Some(block_idx) {
             self.block_idx = None;
-            self.block_device.read(&mut self.block, block_idx)?;
+            self.block_device.read(&mut self.blocks[..1], block_idx)?;
             self.block_idx = Some(block_idx);
         }
-        Ok(&mut self.block[0])
+        Ok(&mut self.blocks[0])
     }
 
     /// Write back a block you read with [`Self::read_mut`] and then modified.
     pub fn write_back(&mut self) -> Result<(), D::Error> {
         self.block_device.write(
-            &self.block,
+            &self.blocks[..1],
             self.block_idx.expect("write_back with no read"),
         )
     }
@@ -142,18 +162,18 @@ where
     /// This is useful for updating two File Allocation Tables.
     pub fn write_back_with_duplicate(&mut self, duplicate: BlockIdx) -> Result<(), D::Error> {
         self.block_device.write(
-            &self.block,
+            &self.blocks[..1],
             self.block_idx.expect("write_back with no read"),
         )?;
-        self.block_device.write(&self.block, duplicate)?;
+        self.block_device.write(&self.blocks[..1], duplicate)?;
         Ok(())
     }
 
     /// Access a blank sector
     pub fn blank_mut(&mut self, block_idx: BlockIdx) -> &mut Block {
         self.block_idx = Some(block_idx);
-        self.block[0].fill(0);
-        &mut self.block[0]
+        self.blocks[0].fill(0);
+        &mut self.blocks[0]
     }
 
     /// Access the block device
@@ -167,6 +187,16 @@ where
     /// Get the block device back
     pub fn free(self) -> D {
         self.block_device
+    }
+
+    /// flatten
+    pub fn as_bytes(&self, count: usize) -> &[u8] {
+        unsafe {
+            core::slice::from_raw_parts(
+                self.blocks.as_ptr() as *const u8,
+                count * Block::LEN
+            )
+        }
     }
 }
 

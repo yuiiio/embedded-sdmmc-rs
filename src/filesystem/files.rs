@@ -94,11 +94,11 @@ where
     /// Recommended values: 32 (16KB), 64 (32KB), or 128 (64KB).
     ///
     /// Returns how many bytes were read, or an error.
-    pub fn read_multi<const BLOCKS: usize>(
+    pub fn read_multi(
         &self,
         buffer: &mut [u8],
     ) -> Result<usize, crate::Error<D::Error>> {
-        self.volume_mgr.read_multi::<BLOCKS>(self.raw_file, buffer)
+        self.volume_mgr.read_multi(self.raw_file, buffer)
     }
 
     /// Write to the file
