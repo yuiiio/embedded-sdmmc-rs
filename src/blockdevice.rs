@@ -27,7 +27,7 @@ impl Block {
     pub const LEN_U32: u32 = 512;
 
     /// Create a new block full of zeros.
-    pub fn new() -> Block {
+    pub const fn new() -> Block {
         Block {
             contents: [0u8; Self::LEN],
         }
@@ -107,7 +107,7 @@ where
     pub fn new(block_device: D) -> Self {
         BlockCache {
             block_device,
-            blocks: core::array::from_fn(|_| Block::new()),
+            blocks: [const { Block::new() }; N],
             block_idx: None,
         }
     }
