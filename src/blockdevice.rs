@@ -85,6 +85,9 @@ pub trait BlockDevice {
     fn write(&self, blocks: &[Block], start_block_idx: BlockIdx) -> Result<(), Self::Error>;
     /// Determine how many blocks this device can hold.
     fn num_blocks(&self) -> Result<BlockCount, Self::Error>;
+    /// Read blocks directly into a byte slice, bypassing the block cache.
+    /// This avoids an intermediate copy from the block cache to the target buffer.
+    fn read_multi_bytes(&self, start_block_idx: BlockIdx, bytes: &mut [u8]) -> Result<usize, Self::Error>;
 }
 
 /// A caching layer for block devices
@@ -137,6 +140,22 @@ where
         self.block_idx = None;
 
         Ok(&self.blocks[..count])
+    }
+
+    /// Read multiple blocks directly into a byte slice.
+    /// This avoids an intermediate copy from the block cache to the target buffer.
+    pub fn read_multi_to_bytes(
+        &mut self,
+        start: BlockIdx,
+        bytes: &mut [u8],
+    ) -> Result<usize, D::Error> {
+        self.block_idx = None;
+
+        let bytes_read = self
+            .block_device
+            .read_multi_bytes(start, bytes)?;
+
+        Ok(bytes_read)
     }
 
     /// Read a block, and return a reference to it.

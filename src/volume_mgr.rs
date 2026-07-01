@@ -1157,22 +1157,13 @@ where
             // =========================
             // 4. multi block
             // =========================
-
-            let blocks = cache
-                .read_multi(block_idx, blocks_to_read)
-                .map_err(Error::DeviceError)?;
-
-            let bytes_read = (blocks.len() * Block::LEN)
+            let bytes_to_read = (blocks_to_read * Block::LEN)
                 .min(space)
                 .min(data.open_files[file_idx].left() as usize);
 
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    blocks.as_ptr() as *const u8,
-                    buffer.as_mut_ptr().add(written),
-                    bytes_read,
-                );
-            }
+            let bytes_read = cache
+                .read_multi_to_bytes(block_idx, &mut buffer[written..][..bytes_to_read])
+                .map_err(Error::DeviceError)?;
 
             written += bytes_read;
             space -= bytes_read;

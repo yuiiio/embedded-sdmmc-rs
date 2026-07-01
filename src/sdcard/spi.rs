@@ -174,6 +174,21 @@ where
         inner.check_init()?;
         inner.num_blocks()
     }
+
+    /// Read blocks directly into a byte slice.
+    ///
+    /// This will trigger card (re-)initialisation.
+    fn read_multi_bytes(
+        &self,
+        start_block_idx: BlockIdx,
+        bytes: &mut [u8],
+    ) -> Result<usize, Self::Error> {
+        let mut inner = self.inner.borrow_mut();
+        crate::debug!("Read {} bytes @ {}", bytes.len(), start_block_idx.0);
+        inner.check_init()?;
+        inner.read_multi_direct(bytes, start_block_idx)?;
+        Ok(bytes.len())
+    }
 }
 
 /// Inner details for the SD Card driver.
@@ -220,6 +235,40 @@ where
             // Stop the read
             self.card_command(CmdId::CMD12_StopTransmission, 0)?;
         }
+        Ok(())
+    }
+
+    /// Read blocks directly into a byte slice, skipping the block cache.
+    /// This avoids an intermediate copy from the block cache to the target buffer.
+    ///
+    /// Note: This method uses multi-block read (CMD18) for efficiency, but each
+    /// block still requires a per-block data token and CRC bytes over SPI.
+    /// For optimal performance with large transfers, consider using the block
+    /// cache's `read_multi` method instead.
+    fn read_multi_direct(
+        &mut self,
+        bytes: &mut [u8],
+        start_block_idx: BlockIdx,
+    ) -> Result<(), Error> {
+        let num_blocks = bytes.len() / Block::LEN;
+        let start_idx = match self.card_type {
+            Some(CardType::SD1 | CardType::SD2) => start_block_idx.0 * 512,
+            Some(CardType::SdhcSdxc) => start_block_idx.0,
+            None => return Err(Error::CardNotFound),
+        };
+
+        // Start multi-block read
+        self.card_command(CmdId::CMD18_ReadMultipleBlock, start_idx)?;
+
+        // Read blocks directly into user buffer
+        for block_idx in 0..num_blocks {
+            let block_start = block_idx * Block::LEN;
+            self.read_data(&mut bytes[block_start..block_start + Block::LEN], false)?;
+        }
+
+        // Stop transmission
+        self.card_command(CmdId::CMD12_StopTransmission, 0)?;
+
         Ok(())
     }
 
