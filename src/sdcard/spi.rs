@@ -226,10 +226,6 @@ where
             // Start a multi-block read
             self.card_command(CmdId::CMD18_ReadMultipleBlock, start_idx)?;
             for block in blocks.iter_mut() {
-                // Skip per-block CRC in multi-block mode for performance.
-                // The SD card protocol has its own error detection and
-                // retry mechanism. CRC bytes are still transferred but not
-                // verified.
                 self.read_data(&mut block.contents, false)?;
             }
             // Stop the read
@@ -238,13 +234,7 @@ where
         Ok(())
     }
 
-    /// Read blocks directly into a byte slice, skipping the block cache.
-    /// This avoids an intermediate copy from the block cache to the target buffer.
-    ///
-    /// Note: This method uses multi-block read (CMD18) for efficiency, but each
-    /// block still requires a per-block data token and CRC bytes over SPI.
-    /// For optimal performance with large transfers, consider using the block
-    /// cache's `read_multi` method instead.
+    /// Read blocks directly into a byte slice, bypassing the block cache.
     fn read_multi_direct(
         &mut self,
         bytes: &mut [u8],

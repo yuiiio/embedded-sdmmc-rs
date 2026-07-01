@@ -1918,6 +1918,18 @@ mod tests {
         fn num_blocks(&self) -> Result<BlockCount, Self::Error> {
             Ok(BlockCount(2))
         }
+
+        fn read_multi_bytes(
+            &self,
+            _start_block_idx: BlockIdx,
+            _bytes: &mut [u8],
+        ) -> Result<usize, Self::Error> {
+            // Not used by DummyBlockDevice path, but required by trait.
+            Err(Error::DeviceError(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "DummyBlockDevice does not support read_multi_bytes",
+            )))
+        }
     }
 
     #[test]

@@ -126,6 +126,7 @@ where
     }
 
     /// multi-read
+    /*
     pub fn read_multi(
         &mut self,
         start: BlockIdx,
@@ -139,6 +140,7 @@ where
 
         Ok(&self.blocks[..count])
     }
+    */
 
     /// Read multiple blocks directly into a byte slice.
     /// This avoids an intermediate copy from the block cache to the target buffer.
