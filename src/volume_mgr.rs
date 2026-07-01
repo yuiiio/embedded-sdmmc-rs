@@ -1717,7 +1717,6 @@ mod tests {
     impl BlockDevice for DummyBlockDevice {
         type Error = Error;
 
-        /// Read one or more blocks, starting at the given block index.
         fn read(&self, blocks: &mut [Block], start_block_idx: BlockIdx) -> Result<(), Self::Error> {
             // Actual blocks taken from an SD card, except I've changed the start and length of partition 0.
             static BLOCKS: [Block; 3] = [

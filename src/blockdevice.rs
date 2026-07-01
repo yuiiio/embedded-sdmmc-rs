@@ -94,15 +94,15 @@ pub trait BlockDevice {
 ///
 /// Caches a single block.
 #[derive(Debug)]
-pub struct BlockCache<D, const N: usize = 256> {
+pub struct BlockCache<D> {
     block_device: D,
-    /// multi-block scratch + cache
-    blocks: [Block; N],
+    /// single-block cache
+    blocks: [Block; 1],
     /// for single-block cache
     block_idx: Option<BlockIdx>,
 }
 
-impl<D, const N: usize> BlockCache<D, N>
+impl<D> BlockCache<D>
 where
     D: BlockDevice,
 {
@@ -110,7 +110,7 @@ where
     pub fn new(block_device: D) -> Self {
         BlockCache {
             block_device,
-            blocks: [const { Block::new() }; N],
+            blocks: [const { Block::new() }; 1],
             block_idx: None,
         }
     }
@@ -131,8 +131,6 @@ where
         start: BlockIdx,
         count: usize,
     ) -> Result<&[Block], D::Error> {
-        let count = count.min(N);
-
         self.block_device
             .read(&mut self.blocks[..count], start)?;
 
@@ -149,13 +147,11 @@ where
         start: BlockIdx,
         bytes: &mut [u8],
     ) -> Result<usize, D::Error> {
+        // Invalidate single-block cache
         self.block_idx = None;
 
-        let bytes_read = self
-            .block_device
-            .read_multi_bytes(start, bytes)?;
-
-        Ok(bytes_read)
+        // Read directly into user buffer via block device
+        self.block_device.read_multi_bytes(start, bytes)
     }
 
     /// Read a block, and return a reference to it.
