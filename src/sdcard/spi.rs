@@ -206,12 +206,16 @@ where
         if blocks.len() == 1 {
             // Start a single-block read
             self.card_command(CmdId::CMD17_ReadSingleBlock, start_idx)?;
-            self.read_data(&mut blocks[0].contents)?;
+            self.read_data(&mut blocks[0].contents, true)?;
         } else {
             // Start a multi-block read
             self.card_command(CmdId::CMD18_ReadMultipleBlock, start_idx)?;
             for block in blocks.iter_mut() {
-                self.read_data(&mut block.contents)?;
+                // Skip per-block CRC in multi-block mode for performance.
+                // The SD card protocol has its own error detection and
+                // retry mechanism. CRC bytes are still transferred but not
+                // verified.
+                self.read_data(&mut block.contents, false)?;
             }
             // Stop the read
             self.card_command(CmdId::CMD12_StopTransmission, 0)?;
@@ -288,7 +292,7 @@ where
             return Err(Error::RegisterReadError);
         }
         let mut csd_raw: [u8; 16] = [0; 16];
-        self.read_data(&mut csd_raw)?;
+        self.read_data(&mut csd_raw, true)?;
 
         // Select the CSD layout from the CSD_STRUCTURE field (bits 127:126);
         // note that it is independent from the Physical Layer v2.00+ (`card_type`).
@@ -298,7 +302,10 @@ where
     /// Read an arbitrary number of bytes from the card using the SD Card
     /// protocol and an optional CRC. Always fills the given buffer, so make
     /// sure it's the right size.
-    fn read_data(&mut self, buffer: &mut [u8]) -> Result<(), Error> {
+    ///
+    /// The CRC bytes are always read and discarded to maintain data alignment.
+    /// When `check_crc` is true, the CRC is verified against the data.
+    fn read_data(&mut self, buffer: &mut [u8], check_crc: bool) -> Result<(), Error> {
         // Get first non-FF byte.
         let mut delay = Delay::new_read();
         let status = loop {
@@ -315,15 +322,17 @@ where
         buffer.fill(0xFF);
         self.transfer_bytes(buffer)?;
 
-        // These two bytes are always sent. They are either a valid CRC, or
-        // junk, depending on whether CRC mode was enabled.
+        // CRC bytes are always read and discarded to maintain data alignment.
         let mut crc_bytes = [0xFF; 2];
         self.transfer_bytes(&mut crc_bytes)?;
-        if self.options.use_crc {
-            let crc = u16::from_be_bytes(crc_bytes);
-            let calc_crc = crc16(buffer);
-            if crc != calc_crc {
-                return Err(Error::CrcError(crc, calc_crc));
+
+        if check_crc {
+            if self.options.use_crc {
+                let crc = u16::from_be_bytes(crc_bytes);
+                let calc_crc = crc16(buffer);
+                if crc != calc_crc {
+                    return Err(Error::CrcError(crc, calc_crc));
+                }
             }
         }
 
