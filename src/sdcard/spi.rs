@@ -570,7 +570,11 @@ where
 
     /// Receive a byte from the SPI bus by clocking out an 0xFF byte.
     fn read_byte(&mut self) -> Result<u8, Error> {
-        self.transfer_byte(0xFF)
+        let mut buf = [0xFFu8; 1];
+        self.spi
+            .transfer_in_place(&mut buf)
+            .map_err(|_| Error::Transport)?;
+        Ok(buf[0])
     }
 
     /// Send a byte over the SPI bus and ignore what comes back.
