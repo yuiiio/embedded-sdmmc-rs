@@ -221,7 +221,7 @@ where
         if blocks.len() == 1 {
             // Start a single-block read
             self.card_command(CmdId::CMD17_ReadSingleBlock, start_idx)?;
-            self.read_data(&mut blocks[0].contents, true)?;
+            self.read_data(&mut blocks[0].contents, false)?;
         } else {
             // Start a multi-block read
             self.card_command(CmdId::CMD18_ReadMultipleBlock, start_idx)?;
@@ -331,7 +331,7 @@ where
             return Err(Error::RegisterReadError);
         }
         let mut csd_raw: [u8; 16] = [0; 16];
-        self.read_data(&mut csd_raw, true)?;
+        self.read_data(&mut csd_raw, false)?;
 
         // Select the CSD layout from the CSD_STRUCTURE field (bits 127:126);
         // note that it is independent from the Physical Layer v2.00+ (`card_type`).
