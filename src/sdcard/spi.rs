@@ -361,9 +361,11 @@ where
         // 送信は 0xFF 固定。呼び出し側バッファ (PSRAM) を 0xFF で埋めて
         // transfer_in_place するのと波形は同一だが、PSRAM への書き込みと
         // 送信のための読み出しが不要になる。
-        let ff = [0xFFu8; 512];
+        // FF buffer to sram(avoid memset? but consume ram usage)
+        #[unsafe(link_section = ".data")]
+        static FF: [u8; 512] = [0xFFu8; 512];
         self.spi
-            .transfer(buffer, &ff[..buffer.len()])
+            .transfer(buffer, &FF[..buffer.len()])
             .map_err(|_e| Error::Transport)?;
 
         // CRC bytes are always read and discarded to maintain data alignment.
