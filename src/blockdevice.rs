@@ -11,7 +11,10 @@
 /// This library does not support devices with a block size other than 512
 /// bytes.
 #[derive(Clone)]
-#[repr(transparent)]
+// Word aligned so the block can be a DMA destination. A bare `[u8; 512]` has
+// alignment 1, and DMA engines that burst four bytes at a time need the address
+// aligned to match; the length already is.
+#[repr(C, align(4))]
 pub struct Block {
     /// The 512 bytes in this block (or sector).
     pub contents: [u8; Block::LEN],
