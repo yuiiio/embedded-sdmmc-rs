@@ -259,6 +259,8 @@ where
             None => return Err(Error::CardNotFound),
         };
 
+        crate::perf::add(&crate::perf::MULTI_READS, 1);
+
         // Start multi-block read
         self.card_command(CmdId::CMD18_ReadMultipleBlock, start_idx)?;
 
@@ -369,14 +371,20 @@ where
     )]
     fn read_data(&mut self, buffer: &mut [u8], check_crc: bool) -> Result<(), Error> {
         // Get first non-FF byte.
+        let t_start = crate::perf::ccount();
         let mut delay = Delay::new_read();
+        let mut polls = 0u32;
         let status = loop {
             let s = self.read_byte()?;
+            polls += 1;
             if s != 0xFF {
                 break s;
             }
             delay.delay(&mut self.delayer, Error::TimeoutReadBuffer)?;
         };
+        let t_token = crate::perf::ccount();
+        crate::perf::add(&crate::perf::TOKEN_WAIT, t_token.wrapping_sub(t_start));
+        crate::perf::add(&crate::perf::TOKEN_POLLS, polls);
         if status != DATA_START_BLOCK {
             return Err(Error::ReadError);
         }
@@ -390,10 +398,16 @@ where
         self.spi
             .transfer(buffer, &FF[..buffer.len()])
             .map_err(|_e| Error::Transport)?;
+        let t_data = crate::perf::ccount();
+        crate::perf::add(&crate::perf::DATA, t_data.wrapping_sub(t_token));
 
         // CRC bytes are always read and discarded to maintain data alignment.
         let mut crc_bytes = [0xFF; 2];
         self.transfer_bytes(&mut crc_bytes)?;
+        crate::perf::add(
+            &crate::perf::CRC,
+            crate::perf::ccount().wrapping_sub(t_data),
+        );
 
         if check_crc {
             if self.options.use_crc {
@@ -572,6 +586,16 @@ where
         inline(never)
     )]
     fn card_command(&mut self, command: CmdId, arg: u32) -> Result<u8, Error> {
+        let t_start = crate::perf::ccount();
+        let result = self.card_command_inner(command, arg);
+        crate::perf::add(
+            &crate::perf::COMMAND,
+            crate::perf::ccount().wrapping_sub(t_start),
+        );
+        result
+    }
+
+    fn card_command_inner(&mut self, command: CmdId, arg: u32) -> Result<u8, Error> {
         if command != CmdId::CMD0_GoIdleState && command != CmdId::CMD12_StopTransmission {
             self.wait_not_busy(Delay::new_command())?;
         }

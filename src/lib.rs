@@ -1,3 +1,4 @@
+#![cfg_attr(target_arch = "xtensa", feature(asm_experimental_arch))]
 //! # embedded-sdmmc
 //!
 //! > An SD/MMC Library written in Embedded Rust
@@ -86,6 +87,97 @@ extern crate hex_literal;
 
 #[macro_use]
 mod structure;
+
+/// Cycle counters for taking apart where a read actually spends its time.
+///
+/// Temporary diagnostic scaffolding: every measurement here was previously
+/// being *inferred* by subtracting a synthetic transport benchmark from the
+/// end to end time, which turned out to be wrong more often than right.
+pub mod perf {
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    /// Cycles spent waiting for the data token that precedes each block.
+    pub static TOKEN_WAIT: AtomicU32 = AtomicU32::new(0);
+    /// Cycles spent in the 512-byte payload transfer itself.
+    pub static DATA: AtomicU32 = AtomicU32::new(0);
+    /// Cycles spent reading the two CRC bytes that follow each block.
+    pub static CRC: AtomicU32 = AtomicU32::new(0);
+    /// Cycles spent in `card_command`, busy-waiting included.
+    pub static COMMAND: AtomicU32 = AtomicU32::new(0);
+    /// Single-byte polls issued while waiting for data tokens.
+    pub static TOKEN_POLLS: AtomicU32 = AtomicU32::new(0);
+    /// Multi-block reads issued, i.e. CMD18/CMD12 pairs.
+    pub static MULTI_READS: AtomicU32 = AtomicU32::new(0);
+
+    /// Reads the CPU cycle counter. Ticks at the CPU clock, so 240 cycles per
+    /// microsecond at this chip's maximum.
+    ///
+    /// Deliberately *not* marked `nomem`, even though the instruction touches
+    /// no memory: that would let the compiler move memory operations across
+    /// this read, hoisting the very code being timed out from between a pair of
+    /// them and collapsing the interval to nothing. Leaving it off makes the
+    /// block a compiler barrier, which is the property a timestamp needs.
+    #[inline(always)]
+    #[allow(missing_docs)]
+    pub fn ccount() -> u32 {
+        #[cfg(target_arch = "xtensa")]
+        {
+            let cycles: u32;
+            // SAFETY: reads a special register.
+            unsafe { core::arch::asm!("rsr.ccount {0}", out(reg) cycles, options(nostack)) };
+            cycles
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            0
+        }
+    }
+
+    /// This chip has no atomic read-modify-write instruction, and the counters
+    /// are only touched by the single thread doing the read, so a load/store
+    /// pair is both sufficient and cheaper than a critical section would be.
+    #[inline(always)]
+    pub(crate) fn add(counter: &AtomicU32, cycles: u32) {
+        let total = counter.load(Ordering::Relaxed).wrapping_add(cycles);
+        counter.store(total, Ordering::Relaxed);
+    }
+
+    /// Zero every counter. Call immediately before the span being measured.
+    pub fn reset() {
+        for counter in [&TOKEN_WAIT, &DATA, &CRC, &COMMAND, &TOKEN_POLLS, &MULTI_READS] {
+            counter.store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// Counters as of now, cycle counts converted to microseconds.
+    pub struct Snapshot {
+        /// Microseconds spent waiting for data tokens.
+        pub token_wait_us: u32,
+        /// Microseconds spent transferring block payloads.
+        pub data_us: u32,
+        /// Microseconds spent reading trailing CRC bytes.
+        pub crc_us: u32,
+        /// Microseconds spent in `card_command`, busy-waiting included.
+        pub command_us: u32,
+        /// Single-byte polls issued while waiting for data tokens.
+        pub token_polls: u32,
+        /// Multi-block reads issued, i.e. CMD18/CMD12 pairs.
+        pub multi_reads: u32,
+    }
+
+    /// Read the counters back, converting cycles using `cpu_mhz`.
+    pub fn snapshot(cpu_mhz: u32) -> Snapshot {
+        let us = |c: &AtomicU32| c.load(Ordering::Relaxed) / cpu_mhz;
+        Snapshot {
+            token_wait_us: us(&TOKEN_WAIT),
+            data_us: us(&DATA),
+            crc_us: us(&CRC),
+            command_us: us(&COMMAND),
+            token_polls: TOKEN_POLLS.load(Ordering::Relaxed),
+            multi_reads: MULTI_READS.load(Ordering::Relaxed),
+        }
+    }
+}
 
 pub mod blockdevice;
 pub mod fat;
