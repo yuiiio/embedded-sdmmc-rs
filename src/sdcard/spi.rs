@@ -245,7 +245,14 @@ where
         bytes: &mut [u8],
         start_block_idx: BlockIdx,
     ) -> Result<(), Error> {
+        // A trailing partial block used to be silently dropped: `num_blocks`
+        // rounded down and the caller was still told the whole slice had been
+        // filled, so the tail of every file came back as whatever was in the
+        // buffer before. Read it through a scratch block instead, which also
+        // keeps every transfer exactly 512 bytes and so keeps the DMA path's
+        // alignment guarantee intact.
         let num_blocks = bytes.len() / Block::LEN;
+        let tail = bytes.len() % Block::LEN;
         let start_idx = match self.card_type {
             Some(CardType::SD1 | CardType::SD2) => start_block_idx.0 * 512,
             Some(CardType::SdhcSdxc) => start_block_idx.0,
@@ -259,6 +266,12 @@ where
         for block_idx in 0..num_blocks {
             let block_start = block_idx * Block::LEN;
             self.read_data(&mut bytes[block_start..block_start + Block::LEN], false)?;
+        }
+
+        if tail > 0 {
+            let mut scratch = [0u8; Block::LEN];
+            self.read_data(&mut scratch, false)?;
+            bytes[num_blocks * Block::LEN..].copy_from_slice(&scratch[..tail]);
         }
 
         // Stop transmission
