@@ -290,6 +290,11 @@ impl FatVolume {
     }
 
     /// Look in the FAT to see which cluster comes next.
+    #[cfg_attr(
+        all(target_arch = "xtensa", target_os = "none"),
+        unsafe(link_section = ".rwtext"),
+        inline(never)
+    )]
     pub(crate) fn next_cluster<D>(
         &self,
         block_cache: &mut BlockCache<D>,

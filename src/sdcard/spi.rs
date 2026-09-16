@@ -235,6 +235,11 @@ where
     }
 
     /// Read blocks directly into a byte slice, bypassing the block cache.
+    #[cfg_attr(
+        all(target_arch = "xtensa", target_os = "none"),
+        unsafe(link_section = ".rwtext"),
+        inline(never)
+    )]
     fn read_multi_direct(
         &mut self,
         bytes: &mut [u8],
@@ -344,6 +349,11 @@ where
     ///
     /// The CRC bytes are always read and discarded to maintain data alignment.
     /// When `check_crc` is true, the CRC is verified against the data.
+    #[cfg_attr(
+        all(target_arch = "xtensa", target_os = "none"),
+        unsafe(link_section = ".rwtext"),
+        inline(never)
+    )]
     fn read_data(&mut self, buffer: &mut [u8], check_crc: bool) -> Result<(), Error> {
         // Get first non-FF byte.
         let mut delay = Delay::new_read();
@@ -543,6 +553,11 @@ where
     }
 
     /// Perform a command.
+    #[cfg_attr(
+        all(target_arch = "xtensa", target_os = "none"),
+        unsafe(link_section = ".rwtext"),
+        inline(never)
+    )]
     fn card_command(&mut self, command: CmdId, arg: u32) -> Result<u8, Error> {
         if command != CmdId::CMD0_GoIdleState && command != CmdId::CMD12_StopTransmission {
             self.wait_not_busy(Delay::new_command())?;
@@ -722,6 +737,7 @@ impl core::error::Error for Error {}
 /// an error.
 struct Delay {
     retries_left: u32,
+    spins_left: u32,
 }
 
 impl Delay {
@@ -746,10 +762,23 @@ impl Delay {
     /// No value is given in the specification, so we pick the same as the read timeout.
     pub const DEFAULT_COMMAND_RETRIES: u32 = 10_000;
 
+    /// Polls to make back to back before the sleeping retry loop takes over.
+    ///
+    /// A single-byte poll costs well under a microsecond; sleeping costs 10us.
+    /// In SPI mode the card cannot signal readiness unless we clock it, so a
+    /// sleep is time spent refusing to look, and the data token after a block
+    /// in a CMD18 stream normally arrives within a handful of byte times. Spin
+    /// through that common case and keep the sleeping loop, which is what
+    /// bounds the timeouts above, for genuine stalls.
+    ///
+    /// At well under 1us per poll this covers a few hundred microseconds.
+    const DEFAULT_SPINS: u32 = 512;
+
     /// Create a new Delay object with the given maximum number of retries.
     fn new(max_retries: u32) -> Delay {
         Delay {
             retries_left: max_retries,
+            spins_left: Self::DEFAULT_SPINS,
         }
     }
 
@@ -770,13 +799,18 @@ impl Delay {
 
     /// Wait for a while.
     ///
-    /// Checks the retry counter first, and if we hit the max retry limit, the
-    /// value `err` is returned. Otherwise we wait for 10us and then return
-    /// `Ok(())`.
+    /// The first [`Self::DEFAULT_SPINS`] attempts return immediately so the
+    /// caller polls back to back. After that, checks the retry counter, and if
+    /// we hit the max retry limit, the value `err` is returned. Otherwise we
+    /// wait for 10us and then return `Ok(())`.
     fn delay<T>(&mut self, delayer: &mut T, err: Error) -> Result<(), Error>
     where
         T: embedded_hal::delay::DelayNs,
     {
+        if self.spins_left > 0 {
+            self.spins_left -= 1;
+            return Ok(());
+        }
         if self.retries_left == 0 {
             Err(err)
         } else {
